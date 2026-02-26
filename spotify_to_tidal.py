@@ -489,7 +489,7 @@ def _create_and_populate_playlist(
     track_ids: list[int],
 ) -> object:
     """Create a new TIDAL user playlist and add track IDs to it."""
-    console.print(f"\n[cyan]📋  Creating playlist "[bold]{name}[/bold]"…[/cyan]" if _RICH_AVAILABLE else f"\nCreating playlist '{name}'…")
+    console.print(f"\n[cyan]📋  Creating playlist '[bold]{name}[/bold]'…[/cyan]" if _RICH_AVAILABLE else f"\nCreating playlist '{name}'…")
 
     playlist = session.user.create_playlist(
         name,
