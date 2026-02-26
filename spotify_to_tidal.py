@@ -238,23 +238,28 @@ def find_tidal_track(
 # ─────────────────────────────────────────────────────────────────
 # Media / UI helpers
 # ─────────────────────────────────────────────────────────────────
-def display_cover_art(image_url: str, size: int = 320) -> None:
-    """Download and display album cover art in the terminal (requires Pillow)."""
+def display_cover_art(image_url: str, width: int = 30) -> None:
+    """Download and render album cover art inline in the terminal (requires Pillow and term-image)."""
     if not image_url:
         return
 
+    try:
+        from term_image.image import AutoImage  # type: ignore
+    except ImportError:
+        console.print("  [dim](install term-image to see cover art inline: pip install term-image)[/dim]")
+        return
+
     if Image is None:
-        console.print(f"  [dim]Cover: {image_url}[/dim]")
+        console.print("  [dim](install Pillow to see cover art: pip install Pillow)[/dim]")
         return
 
     try:
         response = requests.get(image_url, timeout=5)
         response.raise_for_status()
-        img = Image.open(io.BytesIO(response.content))
-        img.thumbnail((size, size))
-
-        # Try to show inline (works in some terminals / IDEs)
-        img.show()
+        pil_img = Image.open(io.BytesIO(response.content)).convert("RGB")
+        term_img = AutoImage(pil_img)
+        term_img.width = width  # columns; height scales to preserve aspect ratio
+        term_img.draw()
     except Exception as exc:
         console.print(f"  [dim]Could not display cover art: {exc}[/dim]")
 
