@@ -18,6 +18,8 @@ Usage:
   python spotify_to_tidal.py <path_to_csv>
   python spotify_to_tidal.py <path_to_csv> --name "My Playlist"
   python spotify_to_tidal.py <path_to_csv> --session-file tidal_session.json
+  python spotify_to_tidal.py --folder <path_to_folder>
+  python spotify_to_tidal.py --folder <path_to_folder> --session-file tidal_session.json
 ────────────────────────────────────────────────────────────────────
 """
 
@@ -171,6 +173,12 @@ def load_csv(path: Path) -> list[SpotifyTrack]:
             ))
 
     return tracks
+
+
+def discover_csv_files(folder: Path) -> list[Path]:
+    """Return all CSV files found directly within the given folder (non-recursive)."""
+    csv_files = sorted(folder.glob("*.csv"))
+    return csv_files
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -377,6 +385,47 @@ def print_results_summary(results: list[ImportResult]) -> None:
             console.print(f"  [red]✗[/red]  {r.spotify_track.display_name()}" if _RICH_AVAILABLE else f"  ✗  {r.spotify_track.display_name()}")
 
 
+def print_folder_summary(
+    csv_files: list[Path],
+    imported: list[str],
+    skipped: list[str],
+    failed: list[tuple[str, str]],
+) -> None:
+    """Print an overall summary after processing all CSVs in a folder."""
+    console.print("\n")
+    console.rule("[bold cyan]Folder Import Summary[/bold cyan]" if _RICH_AVAILABLE else "Folder Import Summary")
+
+    if _RICH_AVAILABLE:
+        summary = Table(show_header=False, box=None, padding=(0, 2))
+        summary.add_column(style="bold")
+        summary.add_column()
+        summary.add_row("📁  Total CSVs found", str(len(csv_files)))
+        summary.add_row("✅  Imported", f"[green]{len(imported)}[/green]")
+        summary.add_row("⏭️  Skipped by user", f"[yellow]{len(skipped)}[/yellow]")
+        summary.add_row("❌  Failed", f"[red]{len(failed)}[/red]")
+        console.print(summary)
+    else:
+        print(f"  Total CSVs found: {len(csv_files)}")
+        print(f"  Imported:         {len(imported)}")
+        print(f"  Skipped by user:  {len(skipped)}")
+        print(f"  Failed:           {len(failed)}")
+
+    if imported:
+        console.print("\n[bold green]Imported playlists:[/bold green]" if _RICH_AVAILABLE else "\nImported playlists:")
+        for name in imported:
+            console.print(f"  [green]✓[/green]  {name}" if _RICH_AVAILABLE else f"  ✓  {name}")
+
+    if skipped:
+        console.print("\n[bold yellow]Skipped playlists:[/bold yellow]" if _RICH_AVAILABLE else "\nSkipped playlists:")
+        for name in skipped:
+            console.print(f"  [yellow]–[/yellow]  {name}" if _RICH_AVAILABLE else f"  -  {name}")
+
+    if failed:
+        console.print("\n[bold red]Failed playlists:[/bold red]" if _RICH_AVAILABLE else "\nFailed playlists:")
+        for name, reason in failed:
+            console.print(f"  [red]✗[/red]  {name}: {reason}" if _RICH_AVAILABLE else f"  ✗  {name}: {reason}")
+
+
 # ─────────────────────────────────────────────────────────────────
 # Core import logic
 # ─────────────────────────────────────────────────────────────────
@@ -528,6 +577,133 @@ def _create_and_populate_playlist(
 
 
 # ─────────────────────────────────────────────────────────────────
+# Folder import logic
+# ─────────────────────────────────────────────────────────────────
+def _csv_to_default_name(path: Path) -> str:
+    """Derive a human-friendly playlist name from a CSV filename."""
+    return path.stem.replace("_", " ").replace("-", " ").title()
+
+
+def _prompt_playlist_name(default_name: str) -> str:
+    """Ask the user to confirm or change a playlist name."""
+    if _RICH_AVAILABLE:
+        return Prompt.ask(
+            "[cyan]  Playlist name[/cyan]",
+            default=default_name,
+        )
+    raw = input(f"  Playlist name [{default_name}]: ").strip()
+    return raw or default_name
+
+
+def process_folder(
+    folder: Path,
+    session: tidalapi.Session,
+    mode: str,
+) -> None:
+    """
+    Discover all CSV files in *folder*, present each one to the user
+    for confirmation, allow renaming, then import or skip each one.
+    """
+    csv_files = discover_csv_files(folder)
+
+    if not csv_files:
+        console.print(
+            f"[yellow]⚠️  No CSV files found in {folder}[/yellow]"
+            if _RICH_AVAILABLE else f"No CSV files found in {folder}"
+        )
+        return
+
+    console.print(
+        f"\n[bold cyan]📂  Found {len(csv_files)} CSV file(s) in {folder}[/bold cyan]"
+        if _RICH_AVAILABLE else f"\nFound {len(csv_files)} CSV file(s) in {folder}"
+    )
+
+    # Tracking for final summary
+    imported_names: list[str] = []
+    skipped_names: list[str] = []
+    failed_entries: list[tuple[str, str]] = []
+
+    for file_idx, csv_path in enumerate(csv_files, 1):
+        console.print("\n")
+        console.rule(
+            f"[bold cyan]Playlist {file_idx}/{len(csv_files)}: {csv_path.name}[/bold cyan]"
+            if _RICH_AVAILABLE else f"Playlist {file_idx}/{len(csv_files)}: {csv_path.name}"
+        )
+
+        # ── Load and validate CSV ─────────────────────────────────
+        try:
+            tracks = load_csv(csv_path)
+        except Exception as exc:
+            console.print(
+                f"[red]❌  Failed to read {csv_path.name}: {exc}[/red]"
+                if _RICH_AVAILABLE else f"Failed to read {csv_path.name}: {exc}"
+            )
+            failed_entries.append((csv_path.name, str(exc)))
+            continue
+
+        if not tracks:
+            console.print(
+                f"[yellow]⚠️  {csv_path.name} contains no tracks — skipping.[/yellow]"
+                if _RICH_AVAILABLE else f"{csv_path.name} contains no tracks — skipping."
+            )
+            skipped_names.append(csv_path.name)
+            continue
+
+        # ── Show track overview ───────────────────────────────────
+        print_track_list(tracks)
+
+        # ── Ask: import or skip? ──────────────────────────────────
+        do_import = _ask_yes_no(
+            f"\n  Import this playlist ({len(tracks)} tracks)?",
+            default=True,
+        )
+        if not do_import:
+            console.print(
+                "[yellow]  ⏭️  Skipped.[/yellow]" if _RICH_AVAILABLE else "  Skipped."
+            )
+            skipped_names.append(csv_path.name)
+            continue
+
+        # ── Allow renaming ────────────────────────────────────────
+        default_name = _csv_to_default_name(csv_path)
+        playlist_name = _prompt_playlist_name(default_name)
+
+        # ── Import ────────────────────────────────────────────────
+        try:
+            if mode == "review":
+                results, playlist = import_individually(session, tracks, playlist_name)
+            else:
+                results, playlist = import_all(session, tracks, playlist_name)
+        except KeyboardInterrupt:
+            console.print(
+                "\n[yellow]⛔  Import of current playlist interrupted.[/yellow]"
+                if _RICH_AVAILABLE else "\nImport of current playlist interrupted."
+            )
+            # Ask whether to continue with remaining files
+            if not _ask_yes_no("  Continue with remaining playlists?", default=True):
+                raise
+            skipped_names.append(playlist_name)
+            continue
+        except Exception as exc:
+            console.print(
+                f"[red]❌  Import failed for '{playlist_name}': {exc}[/red]"
+                if _RICH_AVAILABLE else f"Import failed for '{playlist_name}': {exc}"
+            )
+            failed_entries.append((playlist_name, str(exc)))
+            continue
+
+        print_results_summary(results)
+        imported_names.append(playlist_name)
+
+        # ── Optionally open in browser ────────────────────────────
+        if _ask_yes_no("  Open this playlist in browser?", default=False):
+            open_playlist(playlist)
+
+    # ── Overall folder summary ────────────────────────────────────
+    print_folder_summary(csv_files, imported_names, skipped_names, failed_entries)
+
+
+# ─────────────────────────────────────────────────────────────────
 # Input helpers
 # ─────────────────────────────────────────────────────────────────
 def _ask_yes_no(prompt: str, default: bool = True) -> bool:
@@ -603,8 +779,24 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("csv", help="Path to the Spotify export CSV file")
-    parser.add_argument("--name", "-n", default=None, help="Name for the new TIDAL playlist")
+
+    # Mutually exclusive: single CSV file or a folder of CSVs
+    source_group = parser.add_mutually_exclusive_group(required=False)
+    source_group.add_argument(
+        "csv",
+        nargs="?",
+        default=None,
+        help="Path to a single Spotify export CSV file",
+    )
+    source_group.add_argument(
+        "--folder",
+        "-f",
+        default=None,
+        metavar="DIR",
+        help="Path to a folder containing one or more Spotify export CSV files",
+    )
+
+    parser.add_argument("--name", "-n", default=None, help="Name for the new TIDAL playlist (single-file mode only)")
     parser.add_argument(
         "--session-file",
         "-s",
@@ -614,9 +806,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    csv_path = Path(args.csv)
-    if not csv_path.exists():
-        sys.exit(f"❌  File not found: {csv_path}")
+    # ── Validate arguments ────────────────────────────────────────
+    if not args.csv and not args.folder:
+        sys.exit(
+            "❌  Please provide either a CSV file path or a folder with --folder.\n"
+            "You can export your playlists using Exportify: https://exportify.app/"
+        )
+
+    if args.folder and args.name:
+        console.print(
+            "[yellow]⚠️  --name is ignored in folder mode. You will be prompted to name each playlist.[/yellow]"
+            if _RICH_AVAILABLE else "Warning: --name is ignored in folder mode."
+        )
 
     # ── Banner ────────────────────────────────────────────────────
     if _RICH_AVAILABLE:
@@ -627,7 +828,34 @@ def main() -> None:
     else:
         print("\n=== Spotify → TIDAL Playlist Importer ===\n")
 
-    # ── Load CSV ──────────────────────────────────────────────────
+    # ── Import mode (shared between single-file and folder modes) ─
+    console.print("\n[bold]How would you like to import?[/bold]" if _RICH_AVAILABLE else "\nHow would you like to import?")
+    console.print("  [cyan]all[/cyan]       – Add all tracks automatically" if _RICH_AVAILABLE else "  all       - Add all tracks automatically")
+    console.print("  [cyan]review[/cyan]    – Review each track individually" if _RICH_AVAILABLE else "  review    - Review each track individually")
+    mode = _ask_choice("\nChoose mode", ["all", "review"], default="all")
+
+    # ── Authenticate once for all imports ─────────────────────────
+    session = get_tidal_session(args.session_file)
+
+    # ── Folder mode ───────────────────────────────────────────────
+    if args.folder:
+        folder_path = Path(args.folder)
+        if not folder_path.is_dir():
+            sys.exit(f"❌  Not a directory: {folder_path}")
+
+        try:
+            process_folder(folder_path, session, mode)
+        except KeyboardInterrupt:
+            sys.exit("\n\n⛔  Import cancelled by user.")
+
+        console.print("\n[bold green]🎉  Done![/bold green]\n" if _RICH_AVAILABLE else "\nDone!\n")
+        return
+
+    # ── Single-file mode ──────────────────────────────────────────
+    csv_path = Path(args.csv)
+    if not csv_path.exists():
+        sys.exit(f"❌  File not found: {csv_path}")
+
     console.print(f"\n[cyan]📂  Loading:[/cyan] {csv_path}" if _RICH_AVAILABLE else f"\nLoading: {csv_path}")
     try:
         tracks = load_csv(csv_path)
@@ -639,30 +867,15 @@ def main() -> None:
 
     console.print(f"[green]✅  Loaded {len(tracks)} tracks.[/green]" if _RICH_AVAILABLE else f"Loaded {len(tracks)} tracks.")
 
-    # ── Show track list ───────────────────────────────────────────
     print_track_list(tracks)
 
-    # ── Playlist name ─────────────────────────────────────────────
+    # Playlist name
     if args.name:
         playlist_name = args.name
     else:
-        default_name = csv_path.stem.replace("_", " ").replace("-", " ").title()
-        if _RICH_AVAILABLE:
-            playlist_name = Prompt.ask("\n[cyan]Playlist name[/cyan]", default=default_name)
-        else:
-            playlist_name = input(f"\nPlaylist name [{default_name}]: ").strip() or default_name
+        default_name = _csv_to_default_name(csv_path)
+        playlist_name = _prompt_playlist_name(default_name)
 
-    # ── Import mode ───────────────────────────────────────────────
-    console.print("\n[bold]How would you like to import?[/bold]" if _RICH_AVAILABLE else "\nHow would you like to import?")
-    console.print("  [cyan]all[/cyan]       – Add all tracks automatically" if _RICH_AVAILABLE else "  all       - Add all tracks automatically")
-    console.print("  [cyan]review[/cyan]    – Review each track individually" if _RICH_AVAILABLE else "  review    - Review each track individually")
-
-    mode = _ask_choice("\nChoose mode", ["all", "review"], default="all")
-
-    # ── Authenticate ──────────────────────────────────────────────
-    session = get_tidal_session(args.session_file)
-
-    # ── Import ────────────────────────────────────────────────────
     try:
         if mode == "review":
             results, playlist = import_individually(session, tracks, playlist_name)
@@ -671,10 +884,8 @@ def main() -> None:
     except KeyboardInterrupt:
         sys.exit("\n\n⛔  Import cancelled by user.")
 
-    # ── Summary ───────────────────────────────────────────────────
     print_results_summary(results)
 
-    # ── Open in browser ───────────────────────────────────────────
     if _ask_yes_no("\nOpen playlist in browser?", default=True):
         open_playlist(playlist)
 
