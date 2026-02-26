@@ -12,7 +12,7 @@ Supported CSV format (exported by tools like Exportify):
   ISRC, Added By, Added At
 
 Requirements:
-  pip install tidalapi requests Pillow pygame rich
+  pip install tidalapi requests pygame rich
 
 Usage:
   python spotify_to_tidal.py <path_to_csv>
@@ -50,11 +50,6 @@ except ImportError:
     sys.exit("❌  requests not found. Run: pip install requests")
 
 try:
-    from PIL import Image
-except ImportError:
-    Image = None  # cover art display is optional
-
-try:
     import pygame
     _PYGAME_AVAILABLE = True
 except ImportError:
@@ -63,7 +58,7 @@ except ImportError:
 # term-image warning must be filtered before the module loads
 warnings.filterwarnings("ignore", category=UserWarning, message=".*not running within a terminal.*")
 try:
-    from term_image.image import AutoImage  # type: ignore
+    from term_image.image import AutoImage, from_url  # type: ignore
     _TERM_IMAGE_AVAILABLE = True
 except ImportError:
     _TERM_IMAGE_AVAILABLE = False
@@ -255,8 +250,11 @@ def find_tidal_track(
 # ─────────────────────────────────────────────────────────────────
 # Media / UI helpers
 # ─────────────────────────────────────────────────────────────────
-def display_cover_art(image_url: str, width: int = 30) -> None:
-    """Download and render album cover art inline in the terminal (requires Pillow and term-image)."""
+def display_cover_art(image_url: str) -> None:
+    """Download and render album cover art inline in the terminal (requires term-image).
+
+    The image is scaled to the full current terminal width.
+    """
     if not image_url:
         return
 
@@ -264,16 +262,8 @@ def display_cover_art(image_url: str, width: int = 30) -> None:
         console.print("  [dim](install term-image to see cover art inline: pip install term-image)[/dim]")
         return
 
-    if Image is None:
-        console.print("  [dim](install Pillow to see cover art: pip install Pillow)[/dim]")
-        return
-
     try:
-        response = requests.get(image_url, timeout=5)
-        response.raise_for_status()
-        pil_img = Image.open(io.BytesIO(response.content)).convert("RGB")
-        term_img = AutoImage(pil_img)
-        term_img.width = width  # columns; height scales to preserve aspect ratio
+        term_img = from_url(image_url)
         term_img.draw()
     except Exception as exc:
         console.print(f"  [dim]Could not display cover art: {exc}[/dim]")
