@@ -168,32 +168,32 @@ def load_csv(path: Path) -> list[SpotifyTrack]:
 # TIDAL session
 # ─────────────────────────────────────────────────────────────────
 def get_tidal_session(session_file: Optional[str] = None) -> tidalapi.Session:
-    """Authenticate with TIDAL, reusing a stored session when available."""
-    session = tidalapi.Session()
+    """Authenticate with TIDAL, reusing a stored session when available.
 
-    if session_file and Path(session_file).exists():
-        console.print(f"[cyan]🔑  Loading saved session from {session_file}…[/cyan]")
-        try:
-            session.login_session_file(session_file)
-            if session.check_login():
-                console.print("[green]✅  Session restored successfully.[/green]")
-                return session
-            console.print("[yellow]⚠️  Saved session expired, re-authenticating…[/yellow]")
-        except Exception as exc:
-            console.print(f"[yellow]⚠️  Could not load session: {exc}[/yellow]")
+    login_session_file() handles both cases transparently:
+    - If the session file exists and is valid, it restores the session.
+    - If the file doesn't exist or the session has expired, it performs a
+      fresh OAuth login and writes the new session to the file.
+    """
+    session = tidalapi.Session()
+    session_path = Path(session_file) if session_file else Path("tidal_session.json")
 
     console.print("\n[bold cyan]🎵  TIDAL Login[/bold cyan]")
-    console.print("A browser link will appear. Open it, log in, and confirm.")
+    if session_path.exists():
+        console.print(f"[cyan]🔑  Found session file {session_path}, attempting restore…[/cyan]")
+    else:
+        console.print("No saved session found. A browser link will appear — open it and log in.")
     console.print("─" * 60)
 
-    session.login_oauth_simple()
+    def _print(msg: str) -> None:
+        console.print(f"[cyan]{msg}[/cyan]")
 
-    if session_file:
-        try:
-            session.login_session_file(session_file, do_login=False)
-            console.print(f"[green]💾  Session saved to {session_file}[/green]")
-        except Exception:
-            pass  # non-fatal
+    success = session.login_session_file(session_path, fn_print=_print)
+
+    if success and session.check_login():
+        console.print("[green]✅  Logged in successfully.[/green]")
+    else:
+        sys.exit("❌  TIDAL login failed. Please try again.")
 
     return session
 
@@ -596,7 +596,7 @@ def main() -> None:
     parser.add_argument(
         "--session-file",
         "-s",
-        default="tidal_session.json",
+        default=None,
         metavar="FILE",
         help="JSON file to persist/load TIDAL session (default: tidal_session.json)",
     )
