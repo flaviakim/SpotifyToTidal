@@ -244,6 +244,8 @@ def display_cover_art(image_url: str, width: int = 30) -> None:
         return
 
     try:
+        import warnings
+        warnings.filterwarnings("ignore", category=UserWarning, message=".*not running within a terminal.*")
         from term_image.image import AutoImage  # type: ignore
     except ImportError:
         console.print("  [dim](install term-image to see cover art inline: pip install term-image)[/dim]")
