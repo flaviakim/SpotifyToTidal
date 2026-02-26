@@ -24,13 +24,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import os
 import sys
 import tempfile
 import time
+import warnings
 import webbrowser
-import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -56,6 +57,14 @@ try:
     _PYGAME_AVAILABLE = True
 except ImportError:
     _PYGAME_AVAILABLE = False
+
+# term-image warning must be filtered before the module loads
+warnings.filterwarnings("ignore", category=UserWarning, message=".*not running within a terminal.*")
+try:
+    from term_image.image import AutoImage  # type: ignore
+    _TERM_IMAGE_AVAILABLE = True
+except ImportError:
+    _TERM_IMAGE_AVAILABLE = False
 
 try:
     from rich.console import Console
@@ -243,11 +252,7 @@ def display_cover_art(image_url: str, width: int = 30) -> None:
     if not image_url:
         return
 
-    try:
-        import warnings
-        warnings.filterwarnings("ignore", category=UserWarning, message=".*not running within a terminal.*")
-        from term_image.image import AutoImage  # type: ignore
-    except ImportError:
+    if not _TERM_IMAGE_AVAILABLE:
         console.print("  [dim](install term-image to see cover art inline: pip install term-image)[/dim]")
         return
 
