@@ -595,14 +595,32 @@ def _prompt_playlist_name(default_name: str) -> str:
     return raw or default_name
 
 
+def _ask_import_mode() -> str:
+    """Ask the user whether to import all tracks automatically or review each one."""
+    console.print(
+        "\n[bold]How would you like to import?[/bold]"
+        if _RICH_AVAILABLE else "\nHow would you like to import?"
+    )
+    console.print(
+        "  [cyan]all[/cyan]       – Add all tracks automatically"
+        if _RICH_AVAILABLE else "  all       - Add all tracks automatically"
+    )
+    console.print(
+        "  [cyan]review[/cyan]    – Review each track individually"
+        if _RICH_AVAILABLE else "  review    - Review each track individually"
+    )
+    return _ask_choice("\nChoose mode", ["all", "review"], default="all")
+
+
 def process_folder(
     folder: Path,
     session: tidalapi.Session,
-    mode: str,
 ) -> None:
     """
     Discover all CSV files in *folder*, present each one to the user
     for confirmation, allow renaming, then import or skip each one.
+    For each playlist the user is asked whether to import all tracks
+    automatically or review them individually.
     """
     csv_files = discover_csv_files(folder)
 
@@ -667,6 +685,9 @@ def process_folder(
         # ── Allow renaming ────────────────────────────────────────
         default_name = _csv_to_default_name(csv_path)
         playlist_name = _prompt_playlist_name(default_name)
+
+        # ── Choose import mode for this playlist ──────────────────
+        mode = _ask_import_mode()
 
         # ── Import ────────────────────────────────────────────────
         try:
@@ -828,12 +849,6 @@ def main() -> None:
     else:
         print("\n=== Spotify → TIDAL Playlist Importer ===\n")
 
-    # ── Import mode (shared between single-file and folder modes) ─
-    console.print("\n[bold]How would you like to import?[/bold]" if _RICH_AVAILABLE else "\nHow would you like to import?")
-    console.print("  [cyan]all[/cyan]       – Add all tracks automatically" if _RICH_AVAILABLE else "  all       - Add all tracks automatically")
-    console.print("  [cyan]review[/cyan]    – Review each track individually" if _RICH_AVAILABLE else "  review    - Review each track individually")
-    mode = _ask_choice("\nChoose mode", ["all", "review"], default="all")
-
     # ── Authenticate once for all imports ─────────────────────────
     session = get_tidal_session(args.session_file)
 
@@ -844,7 +859,7 @@ def main() -> None:
             sys.exit(f"❌  Not a directory: {folder_path}")
 
         try:
-            process_folder(folder_path, session, mode)
+            process_folder(folder_path, session)
         except KeyboardInterrupt:
             sys.exit("\n\n⛔  Import cancelled by user.")
 
@@ -875,6 +890,8 @@ def main() -> None:
     else:
         default_name = _csv_to_default_name(csv_path)
         playlist_name = _prompt_playlist_name(default_name)
+
+    mode = _ask_import_mode()
 
     try:
         if mode == "review":
